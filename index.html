@@ -2,18 +2,19 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Othman Chat - Real Sync</title>
+<title>Othman Chat - كامل مع صوت وفيديو وصور</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
-<style>*{font-family:Tajawal,sans-serif} .scroll::-webkit-scrollbar{width:5px} .scroll::-webkit-scrollbar-thumb{background:#333;border-radius:10px}</style>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
+<style>*{font-family:Tajawal,sans-serif} .scroll::-webkit-scrollbar{width:4px} .scroll::-webkit-scrollbar-thumb{background:#333;border-radius:10px}</style>
 </head>
 <body class="bg-[#0f1214] text-white h-screen overflow-hidden">
 <div id="root" class="h-full"></div>
-<script type="importmap">{"imports":{"firebase/app":"https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js","firebase/auth":"https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js","firebase/firestore":"https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"}}</script>
+<script type="importmap">{"imports":{"firebase/app":"https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js","firebase/auth":"https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js","firebase/firestore":"https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js","firebase/storage":"https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js"}}</script>
 <script type="module">
 import {initializeApp} from "firebase/app";
-import {getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, setPersistence, browserLocalPersistence, browserSessionPersistence, signOut} from "firebase/auth";
-import {getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, onSnapshot, orderBy, serverTimestamp, updateDoc} from "firebase/firestore";
+import {getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut} from "firebase/auth";
+import {getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, onSnapshot, orderBy, serverTimestamp, updateDoc, deleteDoc} from "firebase/firestore";
+import {getStorage, ref, uploadBytes, getDownloadURL} from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCHO9DETFK3E332qHc4upycz-TST_0-yjk",
@@ -24,199 +25,169 @@ const firebaseConfig = {
   appId: "1:501837767911:web:966a789b00cb0fcaff6e42",
   measurementId: "G-DLMYJ92NGS"
 };
-let finalConfig = firebaseConfig;
-
-
-let app, auth, db;
-let curUser=null, curChat=null, unsubChats=null, unsubMsgs=null;
+let finalConfig=firebaseConfig;
+let app=initializeApp(finalConfig), auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
+let curUser=null, curChat=null, unsubChats=null, unsubMsgs=null, mediaRecorder=null, audioChunks=[];
 const root=document.getElementById('root');
 
-function init(){
-  // إذا ما عندنا apiKey حقيقي نطلب من المستخدم
-  if(false){ // X9X check removed - config hardcoded
-    // original: if(finalConfig.apiKey.includes('X9X')){
-    showConfigPrompt();
-    return;
-  }
-  try{
-    app=initializeApp(finalConfig);
-    auth=getAuth(app);
-    db=getFirestore(app);
-    onAuthStateChanged(auth, async u=>{
-      if(u){
-        curUser=u;
-        const r=doc(db,'users',u.uid);
-        const s=await getDoc(r);
-        if(!s.exists()){
-          const name=localStorage.getItem('pending_name')||u.email.split('@')[0];
-          await setDoc(r,{uid:u.uid,email:u.email,displayName:name,createdAt:serverTimestamp(),online:true});
-        }
-        renderMain();
-      }else{ renderAuth('login'); }
-    });
-  }catch(e){ showConfigPrompt(e.message); }
-}
-
-function showConfigPrompt(err=''){
-  root.innerHTML=`
-  <div class="h-full flex items-center justify-center p-4">
-    <div class="bg-[#1e242a] rounded-[24px] p-7 max-w-lg w-full border border-white/10">
-      <h2 class="text-xl font-bold mb-2">⚙️ خطوة أخيرة - ربط Firebase</h2>
-      <p class="text-xs text-white/50 mb-3">هذا الكود يربط موقعك بقاعدة بياناتك في فرانكفورت عشان الرسائل توصل للجميع</p>
-      ${err?`<div class="bg-red-500/20 text-red-300 text-xs p-2 rounded mb-3">${err}</div>`:''}
-      <div class="bg-black/40 p-3 rounded-xl text-[11px] mb-3 leading-5">
-        1. افتح console.firebase.google.com<br>
-        2. اختر مشروع othman-chat-30d01<br>
-        3. ⚙️ > Project settings > General<br>
-        4. في الأسفل Your apps > انسخ firebaseConfig<br>
-        5. الصقه هنا:
-      </div>
-      <textarea id="cfgInput" class="w-full h-40 bg-black rounded-xl p-3 text-[11px] font-mono ltr" dir="ltr" placeholder='{ "apiKey": "...", "authDomain": "...", ... }'></textarea>
-      <button id="saveCfg" class="w-full mt-4 bg-white text-black rounded-full py-3 font-bold">حفظ وربط - سيسمح للجميع بالتواصل ✅</button>
-      <p class="text-[10px] text-white/30 mt-3 text-center">بعد الحفظ، هذا الكود سيسمح لك بالتواصل مع الجميع في العراق والهند وألمانيا</p>
-    </div>
-  </div>`;
-  document.getElementById('saveCfg').onclick=()=>{
-    try{
-      let t=document.getElementById('cfgInput').value.trim();
-      if(t.includes('firebaseConfig')){ const m=t.match(/\{[\s\S]*\}/); if(m) t=m[0]; }
-      const j=JSON.parse(t);
-      localStorage.setItem('othman_firebase_config', JSON.stringify(j));
-      location.reload();
-    }catch(e){ alert('JSON غير صحيح: '+e.message); }
-  };
-}
+// Init
+onAuthStateChanged(auth, async u=>{
+  if(u){ curUser=u; const r=doc(db,'users',u.uid); const s=await getDoc(r); if(!s.exists()){ await setDoc(r,{uid:u.uid,email:u.email,displayName:localStorage.getItem('pending_name')||u.email.split('@')[0],createdAt:serverTimestamp(),online:true}); } renderMain(); }
+  else{ renderAuth('login'); }
+});
 
 function renderAuth(mode){
-  root.innerHTML=`
-  <div class="h-full flex items-center justify-center p-4">
-    <div class="bg-[#1e242a] rounded-[28px] p-7 w-full max-w-[400px] border border-white/5">
-      <div class="flex justify-between mb-6"><div class="font-bold">Othman Chat</div><div class="text-[10px] bg-white/10 px-2 py-1 rounded-full">Firebase متصل ✅</div></div>
-      <div class="grid grid-cols-2 bg-black rounded-full p-1 mb-6"><button id="tReg" class="py-2 rounded-full text-sm ${mode==='reg'?'bg-white text-black font-bold':''}">إنشاء حساب</button><button id="tLog" class="py-2 rounded-full text-sm ${mode==='login'?'bg-white text-black font-bold':''}">تسجيل الدخول</button></div>
-      <div id="form"></div><div id="err" class="hidden mt-3 bg-red-500/20 text-red-300 text-xs p-3 rounded-xl"></div>
-    </div>
-  </div>`;
-  document.getElementById('tLog').onclick=()=>renderAuth('login');
-  document.getElementById('tReg').onclick=()=>renderAuth('reg');
-  const form=document.getElementById('form');
-  if(mode==='login'){
-    form.innerHTML=`<h2 class="text-xl font-bold mb-4 text-right">مرحبا بعودتك</h2><input id="em" placeholder="البريد" class="w-full bg-black border border-white/10 rounded-full px-4 py-3 mb-2 text-sm ltr" dir="ltr"><input id="pw" type="password" placeholder="كلمة المرور" class="w-full bg-black border border-white/10 rounded-full px-4 py-3 mb-3 text-sm ltr" dir="ltr"><label class="flex justify-end gap-2 text-xs mb-4"><span>تذكرني</span><input id="rem" type="checkbox" checked></label><button id="go" class="w-full bg-[#d6e6d2] text-black rounded-full py-3 font-bold">دخول</button><button id="sw" class="w-full text-xs text-blue-300 mt-3">ليس لديك حساب؟ سجل الآن</button>`;
-  }else{
-    form.innerHTML=`<h2 class="text-xl font-bold mb-4 text-right">إنشاء حساب جديد</h2><input id="nm" placeholder="الاسم الكامل" class="w-full bg-black border border-white/10 rounded-full px-4 py-3 mb-2 text-sm"><input id="em" placeholder="البريد" class="w-full bg-black border border-white/10 rounded-full px-4 py-3 mb-2 text-sm ltr" dir="ltr"><input id="pw" type="password" placeholder="كلمة المرور" class="w-full bg-black border border-white/10 rounded-full px-4 py-3 mb-2 text-sm ltr" dir="ltr"><input id="pw2" type="password" placeholder="تأكيد كلمة المرور" class="w-full bg-black border border-white/10 rounded-full px-4 py-3 mb-3 text-sm ltr" dir="ltr"><label class="flex justify-end gap-2 text-xs mb-4"><span>تذكرني</span><input id="rem" type="checkbox" checked></label><button id="go" class="w-full bg-[#d6e6d2] text-black rounded-full py-3 font-bold">إنشاء حساب</button><button id="sw" class="w-full text-xs text-blue-300 mt-3">لديك حساب؟ تسجيل الدخول</button>`;
-  }
-  document.getElementById('sw').onclick=()=>renderAuth(mode==='login'?'reg':'login');
-  document.getElementById('go').onclick=async()=>{
-    const em=document.getElementById('em').value.trim();
-    const pw=document.getElementById('pw').value;
-    const rem=document.getElementById('rem').checked;
-    const err=document.getElementById('err');
-    err.classList.add('hidden');
-    try{
-      await setPersistence(auth, rem?browserLocalPersistence:browserSessionPersistence);
-      if(mode==='reg'){
-        const nm=document.getElementById('nm').value.trim();
-        const pw2=document.getElementById('pw2').value;
-        if(pw!==pw2) throw {code:'mismatch'};
-        if(!nm) throw {code:'noname'};
-        localStorage.setItem('pending_name', nm);
-        await createUserWithEmailAndPassword(auth, em, pw);
-      }else{ await signInWithEmailAndPassword(auth, em, pw); }
-    }catch(e){
-      let m=e.message||'خطأ';
-      if(e.code==='auth/email-already-in-use') m='البريد مسجل مسبقاً - سجل دخول';
-      if(e.code==='auth/invalid-credential' || e.code==='auth/user-not-found') m='لا يوجد حساب بهذا البريد - قم بإنشاء حساب جديد';
-      if(e.code==='mismatch') m='كلمتا المرور غير متطابقتين';
-      if(e.code==='noname') m='اكتب اسمك';
-      if(e.code==='auth/weak-password') m='كلمة المرور ضعيفة';
-      err.textContent=m; err.classList.remove('hidden');
-    }
+  root.innerHTML=`<div class="h-full flex items-center justify-center p-4 bg-[#0f1214]">
+  <div class="bg-[#1e242a] rounded-[28px] p-7 w-full max-w-[400px] border border-white/10">
+    <h1 class="text-2xl font-bold text-center mb-1">Othman Chat 💬</h1><p class="text-center text-white/40 text-xs mb-6">مكالمات فيديو + صوت + صور + ملفات</p>
+    <div class="grid grid-cols-2 bg-black rounded-full p-1 mb-6"><button id="tReg" class="py-2 rounded-full text-sm ${mode==='reg'?'bg-white text-black':''}">إنشاء حساب</button><button id="tLog" class="py-2 rounded-full text-sm ${mode==='login'?'bg-white text-black':''}">تسجيل دخول</button></div>
+    <input id="name" placeholder="اسمك (للإنشاء)" class="w-full bg-black rounded-xl p-3 mb-3 outline-none border border-white/10 ${mode==='login'?'hidden':''}">
+    <input id="email" placeholder="الإيميل" class="w-full bg-black rounded-xl p-3 mb-3 outline-none border border-white/10">
+    <input id="pass" type="password" placeholder="كلمة المرور" class="w-full bg-black rounded-xl p-3 mb-4 outline-none border border-white/10">
+    <div class="flex items-center gap-2 mb-4"><input type="checkbox" id="rem" checked><label for="rem" class="text-xs text-white/60">تذكرني</label></div>
+    <button id="submit" class="w-full bg-white text-black rounded-full py-3 font-bold">${mode==='reg'?'إنشاء حساب':'دخول'}</button>
+    <div id="err" class="text-red-400 text-xs mt-3 text-center"></div>
+  </div></div>`;
+  document.getElementById('tReg').onclick=()=>renderAuth('reg'); document.getElementById('tLog').onclick=()=>renderAuth('login');
+  document.getElementById('submit').onclick=async()=>{
+    const email=document.getElementById('email').value.trim(), pass=document.getElementById('pass').value, name=document.getElementById('name').value.trim()||email.split('@')[0];
+    if(!email||!pass){ document.getElementById('err').innerText='أكمل البيانات'; return; }
+    try{ if(mode==='reg'){ localStorage.setItem('pending_name',name); await createUserWithEmailAndPassword(auth,email,pass); } else { await signInWithEmailAndPassword(auth,email,pass); } }catch(e){ document.getElementById('err').innerText=e.message; }
   };
 }
 
 function renderMain(){
   root.innerHTML=`
-  <div class="flex h-full">
-    <div class="w-[340px] bg-[#1a1f24] border-l border-white/5 flex flex-col">
-      <div class="p-4 border-b border-white/5 flex justify-between items-center"><div class="flex items-center gap-2"><div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center font-bold text-xs">${curUser.email[0].toUpperCase()}</div><div class="text-xs"><div class="font-bold truncate max-w-[140px]">${curUser.email}</div><div class="text-green-400 text-[10px]">● متصل - يسمح للجميع ✅</div></div></div><button id="logout" class="text-[11px] bg-white/10 px-3 py-1 rounded-full">خروج</button></div>
-      <div class="p-3 flex gap-2"><input id="search" placeholder="بحث..." class="flex-1 bg-black rounded-full px-4 py-2 text-xs border border-white/5"><button id="newChat" class="bg-white text-black rounded-full px-3 text-xs font-bold">➕ جديد</button></div>
-      <div id="list" class="flex-1 overflow-auto scroll p-2"></div>
-      <div class="p-2 border-t border-white/5 text-[9px] text-white/20">القاعدة: allow read, write: if true; → يسمح للجميع بالتواصل</div>
+  <div class="h-full flex flex-col md:flex-row">
+    <div class="w-full md:w-[320px] bg-[#171c20] border-l border-white/5 flex flex-col">
+      <div class="p-4 flex justify-between items-center border-b border-white/5"><div><div class="font-bold">الدردشات</div><div class="text-[11px] text-green-400">● متصل - يسمح للجميع</div></div><button id="logout" class="text-xs bg-white/10 px-3 py-1 rounded-full">خروج</button></div>
+      <div class="p-3 flex gap-2"><button id="newChat" class="bg-white text-black rounded-full px-4 py-2 text-sm font-bold">+ جديد</button><input id="search" placeholder="بحث..." class="flex-1 bg-black rounded-full px-4 py-2 text-sm outline-none"></div>
+      <div id="chatList" class="flex-1 overflow-y-auto scroll p-2 space-y-1"></div>
     </div>
-    <div class="flex-1 flex flex-col bg-[#0f1214]"><div id="head" class="h-14 border-b border-white/5 flex items-center px-4 text-xs text-white/40">اختر محادثة</div><div id="msgs" class="flex-1 overflow-auto scroll p-4 space-y-2"></div><div id="inp" class="p-3 border-t border-white/5 hidden"><div class="flex gap-2"><input id="msg" placeholder="اكتب رسالة... ستصل للجميع فوراً" class="flex-1 bg-[#1e242a] rounded-full px-4 py-3 text-sm border border-white/5"><button id="send" class="bg-white text-black rounded-full w-11 h-11">↑</button></div></div></div>
+    <div class="flex-1 flex flex-col bg-[#0f1214] relative">
+      <div id="chatHeader" class="p-3 border-b border-white/5 flex justify-between items-center"><span class="text-white/30 text-sm">اختر محادثة</span></div>
+      <div id="msgs" class="flex-1 overflow-y-auto scroll p-4 space-y-2"></div>
+      <div id="composer" class="p-3 border-t border-white/5 hidden">
+        <div class="flex items-end gap-2 bg-[#1e242a] rounded-[22px] p-2">
+          <label class="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center cursor-pointer">📷<input type="file" id="imgFile" accept="image/*" class="hidden"></label>
+          <label class="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center cursor-pointer">📁<input type="file" id="anyFile" class="hidden"></label>
+          <button id="voiceBtn" class="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center">🎤</button>
+          <textarea id="msgInput" placeholder="اكتب رسالة..." class="flex-1 bg-transparent outline-none resize-none max-h-24 text-sm py-2"></textarea>
+          <button id="sendBtn" class="bg-white text-black rounded-full w-9 h-9 font-bold">↑</button>
+        </div>
+      </div>
+      <div id="callOverlay" class="absolute inset-0 bg-black/90 hidden flex-col items-center justify-center p-6 z-50">
+        <video id="remoteVideo" autoplay playsinline class="w-full h-[60%] bg-zinc-900 rounded-2xl"></video>
+        <video id="localVideo" autoplay muted playsinline class="w-28 h-28 bg-zinc-800 rounded-xl absolute bottom-28 right-6 border-2 border-white"></video>
+        <div class="mt-6 flex gap-3"><button id="endCall" class="bg-red-600 px-8 py-3 rounded-full font-bold">إنهاء</button></div>
+      </div>
+    </div>
   </div>
-  <div id="modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"><div class="bg-[#1e242a] rounded-2xl p-5 w-full max-w-sm"><h3 class="font-bold mb-2">محادثة جديدة مع الجميع</h3><p class="text-[11px] text-white/50 mb-3">اكتب بريد صديقك المسجل - القاعدة الجديدة تسمح للجميع بالتواصل</p><input id="fEmail" placeholder="queen.maryem11s11@gmail.com" class="w-full bg-black rounded-full px-4 py-3 text-sm border border-white/10 ltr" dir="ltr"><div id="mErr" class="text-xs text-red-400 mt-2 hidden"></div><div class="flex gap-2 mt-4"><button id="doChat" class="flex-1 bg-white text-black rounded-full py-2 text-sm font-bold">بدء - سيصل فوراً ✅</button><button id="closeM" class="flex-1 bg-white/10 rounded-full py-2 text-sm">إلغاء</button></div></div></div>
-  `;
-  document.getElementById('logout').onclick=async()=>{if(unsubChats) unsubChats(); if(unsubMsgs) unsubMsgs(); await signOut(auth);};
-  document.getElementById('newChat').onclick=()=>document.getElementById('modal').classList.remove('hidden');
-  document.getElementById('closeM').onclick=()=>document.getElementById('modal').classList.add('hidden');
-  document.getElementById('doChat').onclick=doNewChat;
-  document.getElementById('send').onclick=send;
-  document.getElementById('msg').addEventListener('keydown',e=>{if(e.key==='Enter') send();});
+  <div id="newChatModal" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50"><div class="bg-[#1e242a] rounded-2xl p-6 w-full max-w-sm"><h3 class="font-bold mb-2">محادثة جديدة مع الجميع</h3><p class="text-xs text-white/50 mb-3">اكتب بريد صديقك المسجل</p><input id="friendEmail" placeholder="othmanjamal77@yahoo.com" class="w-full bg-black rounded-xl p-3 text-sm"><div id="friendErr" class="text-red-400 text-xs mt-2"></div><div class="flex gap-2 mt-4"><button id="cancelNew" class="flex-1 bg-white/10 rounded-full py-2">إلغاء</button><button id="createChat" class="flex-1 bg-white text-black rounded-full py-2 font-bold">بدء ✅</button></div></div></div>`;
+
+  document.getElementById('logout').onclick=()=>signOut(auth);
+  document.getElementById('newChat').onclick=()=>{ document.getElementById('newChatModal').classList.remove('hidden'); document.getElementById('newChatModal').classList.add('flex'); };
+  document.getElementById('cancelNew').onclick=()=>{ document.getElementById('newChatModal').classList.add('hidden'); };
+  document.getElementById('createChat').onclick=createNewChat;
+  document.getElementById('sendBtn').onclick=sendMessage;
+  document.getElementById('msgInput').onkeydown=e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMessage(); } };
+  document.getElementById('imgFile').onchange=e=>uploadFile(e.target.files[0],'image');
+  document.getElementById('anyFile').onchange=e=>uploadFile(e.target.files[0],'file');
+  document.getElementById('voiceBtn').onmousedown=startVoice; document.getElementById('voiceBtn').onmouseup=stopVoice; document.getElementById('voiceBtn').ontouchstart=startVoice; document.getElementById('voiceBtn').ontouchend=stopVoice;
+
   loadChats();
 }
-async function doNewChat(){
-  const em=document.getElementById('fEmail').value.trim();
-  const err=document.getElementById('mErr'); err.classList.add('hidden');
-  if(!em || em===curUser.email){ err.textContent='بريد غير صالح'; err.classList.remove('hidden'); return; }
+
+async function createNewChat(){
+  const email=document.getElementById('friendEmail').value.trim().toLowerCase();
+  if(!email) return;
   try{
-    const q=query(collection(db,'users'), where('email','==', em));
-    const s=await getDocs(q);
-    if(s.empty){ err.textContent='المستخدم غير موجود - لازم يسجل أولاً في نفس الموقع'; err.classList.remove('hidden'); return; }
-    const other=s.docs[0].data();
-    const id=[curUser.uid, other.uid].sort().join('_');
-    const ref=doc(db,'chats',id);
-    const ex=await getDoc(ref);
-    if(!ex.exists()) await setDoc(ref,{participants:[curUser.uid,other.uid],participantEmails:[curUser.email,other.email],createdAt:serverTimestamp(),updatedAt:serverTimestamp(),lastMessage:''});
-    document.getElementById('modal').classList.add('hidden');
-    open(id,other);
-  }catch(e){ err.textContent=e.message; err.classList.remove('hidden'); }
-}
-function loadChats(){
-  const q=query(collection(db,'chats'), where('participants','array-contains',curUser.uid));
-  unsubChats=onSnapshot(q, async snap=>{
-    const list=document.getElementById('list');
-    if(snap.empty){ list.innerHTML=`<div class="text-center py-10"><div class="text-2xl">💬</div><div class="text-xs mt-2">لا يوجد محادثات بعد</div><div class="text-[10px] text-white/40 mt-1">القاعدة الجديدة تسمح للجميع<br>أضف صديقك الأول</div><button onclick="document.getElementById('newChat').click()" class="mt-3 text-xs bg-white text-black rounded-full px-4 py-2">➕ محادثة جديدة</button></div>`; return; }
-    list.innerHTML='';
-    for(const d of snap.docs){
-      const data=d.data();
-      const otherUid=data.participants.find(x=>x!==curUser.uid);
-      const otherEmail=(data.participantEmails||[]).find(x=>x!==curUser.email)||'صديق';
-      let name=otherEmail.split('@')[0];
-      try{ const u=await getDoc(doc(db,'users',otherUid)); if(u.exists()) name=u.data().displayName||name; }catch{}
-      const div=document.createElement('div');
-      div.className=`p-3 rounded-xl hover:bg-white/5 cursor-pointer flex gap-2 ${curChat===d.id?'bg-white/10':''}`;
-      div.innerHTML=`<div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-xs font-bold">${name[0].toUpperCase()}</div><div class="flex-1"><div class="text-xs font-bold">${name}</div><div class="text-[10px] text-white/40 truncate">${data.lastMessage||otherEmail}</div></div>`;
-      div.onclick=()=>open(d.id,{displayName:name,email:otherEmail,uid:otherUid});
-      list.appendChild(div);
-    }
-  });
-}
-function open(id, other){
-  curChat=id;
-  document.getElementById('head').innerHTML=`<div class="flex gap-2 items-center"><div class="w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center text-xs font-bold">${other.displayName[0].toUpperCase()}</div><div><div class="font-bold text-white text-xs">${other.displayName}</div><div class="text-[10px] text-white/40">${other.email} - التواصل مسموح للجميع ✅</div></div></div>`;
-  document.getElementById('inp').classList.remove('hidden');
-  if(unsubMsgs) unsubMsgs();
-  const qq=query(collection(db,'chats',id,'messages'), orderBy('createdAt','asc'));
-  unsubMsgs=onSnapshot(qq, snap=>{
-    const c=document.getElementById('msgs'); c.innerHTML='';
-    snap.forEach(ds=>{
-      const m=ds.data(); const me=m.senderId===curUser.uid;
-      const b=document.createElement('div'); b.className=`flex ${me?'justify-end':'justify-start'}`;
-      b.innerHTML=`<div class="${me?'bg-[#d6e6d2] text-black':'bg-[#1e242a] text-white'} rounded-[16px] px-3 py-2 max-w-[75%] text-sm">${m.text}<div class="text-[9px] opacity-50 mt-1">${m.createdAt?.toDate?m.createdAt.toDate().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):''}</div></div>`;
-      c.appendChild(b);
-    });
-    c.scrollTop=c.scrollHeight;
-  });
-}
-async function send(){
-  const i=document.getElementById('msg'); const t=i.value.trim(); if(!t||!curChat) return; i.value='';
-  try{
-    await addDoc(collection(db,'chats',curChat,'messages'),{text:t,senderId:curUser.uid,createdAt:serverTimestamp()});
-    await updateDoc(doc(db,'chats',curChat),{lastMessage:t,updatedAt:serverTimestamp()});
-  }catch(e){ alert('خطأ: '+e.message+' - تأكد من Rules'); }
+    const q=query(collection(db,'users'), where('email','==',email)); const snap=await getDocs(q);
+    if(snap.empty){ document.getElementById('friendErr').innerText='المستخدم غير موجود - يجب أن يسجل أولاً'; return; }
+    const friend=snap.docs[0].data();
+    if(friend.uid===curUser.uid){ document.getElementById('friendErr').innerText='لا يمكنك محادثة نفسك'; return; }
+    const chatId=[curUser.uid, friend.uid].sort().join('_');
+    const refDoc=doc(db,'chats',chatId); const ex=await getDoc(refDoc);
+    if(!ex.exists()){ await setDoc(refDoc,{participants:[curUser.uid,friend.uid], createdAt:serverTimestamp(), lastMsg:''}); }
+    document.getElementById('newChatModal').classList.add('hidden'); openChat(chatId,friend.displayName);
+  }catch(e){ document.getElementById('friendErr').innerText=e.message; }
 }
 
-init();
+function loadChats(){
+  if(unsubChats) unsubChats();
+  const q=query(collection(db,'chats'), where('participants','array-contains',curUser.uid));
+  unsubChats=onSnapshot(q, snap=>{
+    const list=document.getElementById('chatList'); list.innerHTML='';
+    if(snap.empty){ list.innerHTML='<div class="text-center text-white/30 text-xs mt-10">لا يوجد محادثات بعد<br>اضغط + جديد</div>'; return; }
+    snap.forEach(d=>{
+      const data=d.data(); const otherId=data.participants.find(id=>id!==curUser.uid);
+      const div=document.createElement('div'); div.className='p-3 rounded-xl hover:bg-white/5 cursor-pointer flex justify-between items-center';
+      div.innerHTML=`<div><div class="text-sm font-bold">${otherId.slice(0,6)}...</div><div class="text-[11px] text-white/40 truncate w-[180px]">${data.lastMsg||''}</div></div><div class="text-[10px] text-white/20">الآن</div>`;
+      div.onclick=()=>openChat(d.id, otherId);
+      list.appendChild(div);
+    });
+  });
+}
+
+async function openChat(chatId, otherName){
+  curChat=chatId;
+  document.getElementById('chatHeader').innerHTML=`<div><div class="font-bold">${otherName}</div><div class="text-[11px] text-green-400">متصل</div></div><div class="flex gap-2"><button id="audioCall" class="bg-white/10 w-9 h-9 rounded-full">📞</button><button id="videoCall" class="bg-white/10 w-9 h-9 rounded-full">📹</button></div>`;
+  document.getElementById('composer').classList.remove('hidden');
+  document.getElementById('audioCall').onclick=()=>startCall(false); document.getElementById('videoCall').onclick=()=>startCall(true);
+  if(unsubMsgs) unsubMsgs();
+  const q=query(collection(db,'messages'), where('chatId','==',chatId), orderBy('createdAt'));
+  unsubMsgs=onSnapshot(q, snap=>{
+    const box=document.getElementById('msgs'); box.innerHTML='';
+    snap.forEach(m=>{
+      const d=m.data(); const isMe=d.sender===curUser.uid;
+      const el=document.createElement('div'); el.className=`flex ${isMe?'justify-end':'justify-start'}`;
+      let content='';
+      if(d.type==='image') content=`<img src="${d.fileUrl}" class="max-w-[220px] rounded-xl cursor-pointer" onclick="window.open('${d.fileUrl}')">`;
+      else if(d.type==='voice') content=`<audio controls src="${d.fileUrl}" class="w-[200px]"></audio>`;
+      else if(d.type==='file') content=`<a href="${d.fileUrl}" target="_blank" class="underline">📁 ${d.fileName} - تحميل</a>`;
+      else content=`<span class="text-sm">${d.text}</span>`;
+      el.innerHTML=`<div class="${isMe?'bg-white text-black':'bg-[#1e242a]'} rounded-[18px] px-4 py-2 max-w-[75%]">${content}<div class="text-[10px] opacity-50 mt-1">${d.createdAt?.toDate?new Date(d.createdAt.toDate()).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}):''}</div></div>`;
+      box.appendChild(el);
+    });
+    box.scrollTop=box.scrollHeight;
+  });
+}
+
+async function sendMessage(){
+  const txt=document.getElementById('msgInput').value.trim(); if(!txt||!curChat) return;
+  document.getElementById('msgInput').value='';
+  await addDoc(collection(db,'messages'),{chatId:curChat, sender:curUser.uid, text:txt, type:'text', createdAt:serverTimestamp()});
+  await updateDoc(doc(db,'chats',curChat),{lastMsg:txt});
+}
+
+async function uploadFile(file,type){
+  if(!file||!curChat) return; 
+  const path=`chats/${curChat}/${Date.now()}_${file.name}`;
+  const r=ref(storage,path); await uploadBytes(r,file); const url=await getDownloadURL(r);
+  await addDoc(collection(db,'messages'),{chatId:curChat, sender:curUser.uid, type:type, fileUrl:url, fileName:file.name, text:type==='image'?'📷 صورة':`📁 ${file.name}`, createdAt:serverTimestamp()});
+  await updateDoc(doc(db,'chats',curChat),{lastMsg:type==='image'?'📷 صورة':'📁 ملف'});
+}
+
+async function startVoice(e){ e?.preventDefault(); try{ const s=await navigator.mediaDevices.getUserMedia({audio:true}); mediaRecorder=new MediaRecorder(s); audioChunks=[]; mediaRecorder.ondataavailable=ev=>audioChunks.push(ev.data); mediaRecorder.onstop=async()=>{ const blob=new Blob(audioChunks,{type:'audio/webm'}); const file=new File([blob],`voice_${Date.now()}.webm`); await uploadFile(file,'voice'); }; mediaRecorder.start(); document.getElementById('voiceBtn').classList.add('bg-red-600'); }catch(err){ alert('لا يمكن الوصول للمايك'); } }
+async function stopVoice(e){ e?.preventDefault(); if(mediaRecorder&&mediaRecorder.state==='recording'){ mediaRecorder.stop(); document.getElementById('voiceBtn').classList.remove('bg-red-600'); } }
+
+// --- مكالمات WebRTC بسيطة عبر Firestore ---
+let pc, localStream;
+async function startCall(isVideo){
+  document.getElementById('callOverlay').classList.remove('hidden'); document.getElementById('callOverlay').classList.add('flex');
+  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+  localStream=await navigator.mediaDevices.getUserMedia({video:isVideo,audio:true});
+  document.getElementById('localVideo').srcObject=localStream;
+  localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+  pc.ontrack=e=>{ document.getElementById('remoteVideo').srcObject=e.streams[0]; };
+  const callDoc=doc(collection(db,'calls')); const offerCandidates=collection(callDoc,'offerCandidates'); const answerCandidates=collection(callDoc,'answerCandidates');
+  pc.onicecandidate=e=>{ if(e.candidate) addDoc(offerCandidates,e.candidate.toJSON()); };
+  const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+  await setDoc(callDoc,{offer:{type:offer.type,sdp:offer.sdp}, chatId:curChat, createdAt:serverTimestamp()});
+  onSnapshot(callDoc, async snap=>{ const data=snap.data(); if(!pc.currentRemoteDescription && data?.answer){ const ans=new RTCSessionDescription(data.answer); await pc.setRemoteDescription(ans); } });
+  onSnapshot(answerCandidates, snap=>{ snap.docChanges().forEach(async ch=>{ if(ch.type==='added'){ const cand=new RTCIceCandidate(ch.doc.data()); await pc.addIceCandidate(cand); } }); });
+}
+document.getElementById('endCall')?.addEventListener('click', async()=>{ if(pc) pc.close(); if(localStream) localStream.getTracks().forEach(t=>t.stop()); document.getElementById('callOverlay').classList.add('hidden'); });
 </script>
 </body>
 </html>
