@@ -1,14 +1,16 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Othman Chat - كامل مع صوت وفيديو وصور</title>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Othman Chat - ثابت للموبايل واللابتوب</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
-<style>*{font-family:Tajawal,sans-serif} .scroll::-webkit-scrollbar{width:4px} .scroll::-webkit-scrollbar-thumb{background:#333;border-radius:10px}</style>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+<style>*{font-family:Tajawal,sans-serif} .scroll::-webkit-scrollbar{width:4px} .scroll::-webkit-scrollbar-thumb{background:#444;border-radius:10px} .msg-bubble{word-break:break-word}</style>
 </head>
 <body class="bg-[#0f1214] text-white h-screen overflow-hidden">
 <div id="root" class="h-full"></div>
+
+<!-- Firebase -->
 <script type="importmap">{"imports":{"firebase/app":"https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js","firebase/auth":"https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js","firebase/firestore":"https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js","firebase/storage":"https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js"}}</script>
 <script type="module">
 import {initializeApp} from "firebase/app";
@@ -25,30 +27,44 @@ const firebaseConfig = {
   appId: "1:501837767911:web:966a789b00cb0fcaff6e42",
   measurementId: "G-DLMYJ92NGS"
 };
-let finalConfig=firebaseConfig;
-let app=initializeApp(finalConfig), auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
-let curUser=null, curChat=null, unsubChats=null, unsubMsgs=null, mediaRecorder=null, audioChunks=[];
+const app=initializeApp(firebaseConfig), auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
+let curUser=null, curChat=null, curChatOther=null, unsubChats=null, unsubMsgs=null, unsubCalls=null;
+let pc=null, localStream=null, remoteStream=null;
 const root=document.getElementById('root');
 
-// Init
 onAuthStateChanged(auth, async u=>{
-  if(u){ curUser=u; const r=doc(db,'users',u.uid); const s=await getDoc(r); if(!s.exists()){ await setDoc(r,{uid:u.uid,email:u.email,displayName:localStorage.getItem('pending_name')||u.email.split('@')[0],createdAt:serverTimestamp(),online:true}); } renderMain(); }
-  else{ renderAuth('login'); }
+  if(u){
+    curUser=u;
+    const uref=doc(db,'users',u.uid);
+    const snap=await getDoc(uref);
+    if(!snap.exists()){
+      await setDoc(uref,{uid:u.uid,email:u.email,displayName:localStorage.getItem('pending_name')||u.email.split('@')[0],createdAt:serverTimestamp(),online:true});
+    } else {
+      await updateDoc(uref,{online:true});
+    }
+    renderMain();
+    listenForIncomingCalls();
+  } else {
+    renderAuth('login');
+  }
 });
 
 function renderAuth(mode){
-  root.innerHTML=`<div class="h-full flex items-center justify-center p-4 bg-[#0f1214]">
-  <div class="bg-[#1e242a] rounded-[28px] p-7 w-full max-w-[400px] border border-white/10">
-    <h1 class="text-2xl font-bold text-center mb-1">Othman Chat 💬</h1><p class="text-center text-white/40 text-xs mb-6">مكالمات فيديو + صوت + صور + ملفات</p>
-    <div class="grid grid-cols-2 bg-black rounded-full p-1 mb-6"><button id="tReg" class="py-2 rounded-full text-sm ${mode==='reg'?'bg-white text-black':''}">إنشاء حساب</button><button id="tLog" class="py-2 rounded-full text-sm ${mode==='login'?'bg-white text-black':''}">تسجيل دخول</button></div>
-    <input id="name" placeholder="اسمك (للإنشاء)" class="w-full bg-black rounded-xl p-3 mb-3 outline-none border border-white/10 ${mode==='login'?'hidden':''}">
-    <input id="email" placeholder="الإيميل" class="w-full bg-black rounded-xl p-3 mb-3 outline-none border border-white/10">
-    <input id="pass" type="password" placeholder="كلمة المرور" class="w-full bg-black rounded-xl p-3 mb-4 outline-none border border-white/10">
-    <div class="flex items-center gap-2 mb-4"><input type="checkbox" id="rem" checked><label for="rem" class="text-xs text-white/60">تذكرني</label></div>
-    <button id="submit" class="w-full bg-white text-black rounded-full py-3 font-bold">${mode==='reg'?'إنشاء حساب':'دخول'}</button>
-    <div id="err" class="text-red-400 text-xs mt-3 text-center"></div>
-  </div></div>`;
-  document.getElementById('tReg').onclick=()=>renderAuth('reg'); document.getElementById('tLog').onclick=()=>renderAuth('login');
+  root.innerHTML=`
+  <div class="h-full flex items-center justify-center p-4">
+    <div class="bg-[#1e242a] rounded-[28px] p-6 w-full max-w-[380px] border border-white/10">
+      <h1 class="text-xl font-bold text-center">Othman Chat</h1>
+      <p class="text-center text-white/40 text-xs mb-5 mt-1">يعمل على الموبايل واللابتوب + مكالمات</p>
+      <div class="grid grid-cols-2 bg-black rounded-full p-1 mb-5"><button id="tReg" class="py-2 rounded-full text-sm ${mode==='reg'?'bg-white text-black font-bold':''}">إنشاء</button><button id="tLog" class="py-2 rounded-full text-sm ${mode==='login'?'bg-white text-black font-bold':''}">دخول</button></div>
+      <input id="name" placeholder="اسمك" class="w-full bg-black rounded-xl p-3 mb-3 outline-none border border-white/10 ${mode==='login'?'hidden':''}">
+      <input id="email" placeholder="الإيميل" class="w-full bg-black rounded-xl p-3 mb-3 outline-none border border-white/10 text-sm">
+      <input id="pass" type="password" placeholder="كلمة المرور" class="w-full bg-black rounded-xl p-3 mb-4 outline-none border border-white/10 text-sm">
+      <button id="submit" class="w-full bg-white text-black rounded-full py-3 font-bold text-sm">${mode==='reg'?'إنشاء حساب':'دخول'}</button>
+      <div id="err" class="text-red-400 text-xs mt-3 text-center"></div>
+    </div>
+  </div>`;
+  document.getElementById('tReg').onclick=()=>renderAuth('reg');
+  document.getElementById('tLog').onclick=()=>renderAuth('login');
   document.getElementById('submit').onclick=async()=>{
     const email=document.getElementById('email').value.trim(), pass=document.getElementById('pass').value, name=document.getElementById('name').value.trim()||email.split('@')[0];
     if(!email||!pass){ document.getElementById('err').innerText='أكمل البيانات'; return; }
@@ -59,135 +75,295 @@ function renderAuth(mode){
 function renderMain(){
   root.innerHTML=`
   <div class="h-full flex flex-col md:flex-row">
-    <div class="w-full md:w-[320px] bg-[#171c20] border-l border-white/5 flex flex-col">
-      <div class="p-4 flex justify-between items-center border-b border-white/5"><div><div class="font-bold">الدردشات</div><div class="text-[11px] text-green-400">● متصل - يسمح للجميع</div></div><button id="logout" class="text-xs bg-white/10 px-3 py-1 rounded-full">خروج</button></div>
-      <div class="p-3 flex gap-2"><button id="newChat" class="bg-white text-black rounded-full px-4 py-2 text-sm font-bold">+ جديد</button><input id="search" placeholder="بحث..." class="flex-1 bg-black rounded-full px-4 py-2 text-sm outline-none"></div>
+    <!-- قائمة المحادثات -->
+    <div id="sidebar" class="w-full md:w-[340px] bg-[#171c20] border-l border-white/5 flex flex-col h-full">
+      <div class="p-4 flex justify-between items-center border-b border-white/5">
+        <div><div class="font-bold text-[15px]">المحادثات</div><div class="text-[11px] text-green-400">● متصل الآن - يعمل للجميع</div></div>
+        <button id="logout" class="text-xs bg-white/10 px-3 py-1.5 rounded-full">خروج</button>
+      </div>
+      <div class="p-3 flex gap-2">
+        <button id="newChat" class="bg-white text-black rounded-full px-5 py-2 text-sm font-bold">+ جديد</button>
+        <input id="searchUser" placeholder="بحث باسم أو إيميل..." class="flex-1 bg-black rounded-full px-4 py-2 text-sm outline-none border border-white/10">
+      </div>
       <div id="chatList" class="flex-1 overflow-y-auto scroll p-2 space-y-1"></div>
+      <div class="p-2 text-[10px] text-white/20 text-center border-t border-white/5">Othman Chat - الموبايل + اللابتوب</div>
     </div>
-    <div class="flex-1 flex flex-col bg-[#0f1214] relative">
-      <div id="chatHeader" class="p-3 border-b border-white/5 flex justify-between items-center"><span class="text-white/30 text-sm">اختر محادثة</span></div>
-      <div id="msgs" class="flex-1 overflow-y-auto scroll p-4 space-y-2"></div>
-      <div id="composer" class="p-3 border-t border-white/5 hidden">
-        <div class="flex items-end gap-2 bg-[#1e242a] rounded-[22px] p-2">
-          <label class="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center cursor-pointer">📷<input type="file" id="imgFile" accept="image/*" class="hidden"></label>
-          <label class="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center cursor-pointer">📁<input type="file" id="anyFile" class="hidden"></label>
-          <button id="voiceBtn" class="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center">🎤</button>
-          <textarea id="msgInput" placeholder="اكتب رسالة..." class="flex-1 bg-transparent outline-none resize-none max-h-24 text-sm py-2"></textarea>
-          <button id="sendBtn" class="bg-white text-black rounded-full w-9 h-9 font-bold">↑</button>
+
+    <!-- منطقة المحادثة -->
+    <div id="chatArea" class="flex-1 flex-col bg-[#0f1214] h-full hidden md:flex">
+      <div id="chatHeader" class="p-3 border-b border-white/5 flex justify-between items-center bg-[#171c20] md:bg-[#0f1214]">
+        <div class="flex items-center gap-3">
+          <button id="backBtn" class="md:hidden w-8 h-8 bg-white/10 rounded-full flex items-center justify-center">←</button>
+          <div><div id="chatName" class="font-bold text-sm">اختر محادثة</div><div id="chatStatus" class="text-[11px] text-white/40">من الجانب</div></div>
+        </div>
+        <div class="flex gap-2">
+          <button id="audioCall" class="bg-white/10 w-10 h-10 rounded-full flex items-center justify-center text-lg hidden">📞</button>
+          <button id="videoCall" class="bg-white text-black w-10 h-10 rounded-full flex items-center justify-center text-lg hidden">📹</button>
         </div>
       </div>
-      <div id="callOverlay" class="absolute inset-0 bg-black/90 hidden flex-col items-center justify-center p-6 z-50">
-        <video id="remoteVideo" autoplay playsinline class="w-full h-[60%] bg-zinc-900 rounded-2xl"></video>
-        <video id="localVideo" autoplay muted playsinline class="w-28 h-28 bg-zinc-800 rounded-xl absolute bottom-28 right-6 border-2 border-white"></video>
-        <div class="mt-6 flex gap-3"><button id="endCall" class="bg-red-600 px-8 py-3 rounded-full font-bold">إنهاء</button></div>
+      <div id="msgs" class="flex-1 overflow-y-auto scroll p-3 md:p-4 space-y-2 bg-[#0f1214]"></div>
+      <div id="composer" class="p-2 md:p-3 border-t border-white/5 bg-[#171c20] hidden">
+        <div class="flex items-end gap-2 bg-black rounded-[24px] p-2 border border-white/10">
+          <label class="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center cursor-pointer shrink-0">📷<input type="file" id="imgFile" accept="image/*" class="hidden"></label>
+          <textarea id="msgInput" placeholder="اكتب رسالة..." rows="1" class="flex-1 bg-transparent outline-none resize-none max-h-28 text-[14px] py-2.5 leading-5"></textarea>
+          <button id="sendBtn" class="bg-white text-black rounded-full w-9 h-9 font-bold shrink-0 flex items-center justify-center">↑</button>
+        </div>
+        <div class="text-[10px] text-white/20 mt-1 text-center md:hidden">اضغط + جديد لبدء محادثة مع صديق مسجل</div>
       </div>
     </div>
+
+    <!-- شاشة فارغة للموبايل -->
+    <div id="emptyMobile" class="flex-1 flex md:hidden flex-col items-center justify-center p-8 text-center bg-[#0f1214]">
+      <div class="text-5xl mb-4">💬</div><div class="font-bold mb-2">مرحباً ${curUser?.email?.split('@')[0]||''}</div><div class="text-sm text-white/40">اختر محادثة من القائمة<br>أو اضغط + جديد لبدء محادثة</div>
+    </div>
   </div>
-  <div id="newChatModal" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50"><div class="bg-[#1e242a] rounded-2xl p-6 w-full max-w-sm"><h3 class="font-bold mb-2">محادثة جديدة مع الجميع</h3><p class="text-xs text-white/50 mb-3">اكتب بريد صديقك المسجل</p><input id="friendEmail" placeholder="othmanjamal77@yahoo.com" class="w-full bg-black rounded-xl p-3 text-sm"><div id="friendErr" class="text-red-400 text-xs mt-2"></div><div class="flex gap-2 mt-4"><button id="cancelNew" class="flex-1 bg-white/10 rounded-full py-2">إلغاء</button><button id="createChat" class="flex-1 bg-white text-black rounded-full py-2 font-bold">بدء ✅</button></div></div></div>`;
+
+  <!-- نافذة محادثة جديدة -->
+  <div id="newChatModal" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-[60]"><div class="bg-[#1e242a] rounded-2xl p-6 w-full max-w-sm border border-white/10"><h3 class="font-bold mb-2 text-sm">محادثة جديدة</h3><p class="text-xs text-white/50 mb-3">اكتب إيميل صديقك المسجل (يعمل من الموبايل واللابتوب)</p><input id="friendEmail" placeholder="othmanjamal77@yahoo.com" class="w-full bg-black rounded-xl p-3 text-sm outline-none border border-white/10"><div id="friendErr" class="text-red-400 text-xs mt-2"></div><div class="flex gap-2 mt-4"><button id="cancelNew" class="flex-1 bg-white/10 rounded-full py-2.5 text-sm">إلغاء</button><button id="createChat" class="flex-1 bg-white text-black rounded-full py-2.5 font-bold text-sm">بدء المحادثة ✅</button></div></div></div>
+
+  <!-- شاشة المكالمة الواردة -->
+  <div id="incomingCall" class="fixed inset-0 bg-black/90 hidden flex-col items-center justify-center p-6 z-[70]">
+    <div class="text-6xl mb-4">📞</div><div id="callerName" class="font-bold text-lg mb-1">مكالمة واردة</div><div id="callerType" class="text-sm text-white/50 mb-8">يتصل بك...</div>
+    <div class="flex gap-4"><button id="rejectCall" class="bg-red-600 w-16 h-16 rounded-full text-2xl">✕</button><button id="acceptCall" class="bg-green-600 w-16 h-16 rounded-full text-2xl">✓</button></div>
+  </div>
+
+  <!-- شاشة المكالمة الجارية -->
+  <div id="callOverlay" class="fixed inset-0 bg-black hidden flex-col z-[80]">
+    <div class="flex-1 relative bg-zinc-900 flex items-center justify-center"><video id="remoteVideo" autoplay playsinline class="w-full h-full object-cover"></video><video id="localVideo" autoplay muted playsinline class="w-28 h-36 bg-zinc-800 rounded-2xl absolute bottom-24 right-4 border-2 border-white object-cover shadow-2xl"></video><div id="callStatus" class="absolute top-6 left-1/2 -translate-x-1/2 bg-black/50 px-4 py-1.5 rounded-full text-xs">جاري الاتصال...</div></div>
+    <div class="p-6 bg-[#171c20] flex justify-center gap-4"><button id="muteBtn" class="bg-white/10 w-12 h-12 rounded-full">🎤</button><button id="endCall" class="bg-red-600 w-16 h-16 rounded-full text-2xl">📞</button><button id="switchCam" class="bg-white/10 w-12 h-12 rounded-full">🔄</button></div>
+  </div>
+  `;
 
   document.getElementById('logout').onclick=()=>signOut(auth);
   document.getElementById('newChat').onclick=()=>{ document.getElementById('newChatModal').classList.remove('hidden'); document.getElementById('newChatModal').classList.add('flex'); };
   document.getElementById('cancelNew').onclick=()=>{ document.getElementById('newChatModal').classList.add('hidden'); };
   document.getElementById('createChat').onclick=createNewChat;
   document.getElementById('sendBtn').onclick=sendMessage;
-  document.getElementById('msgInput').onkeydown=e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMessage(); } };
-  document.getElementById('imgFile').onchange=e=>uploadFile(e.target.files[0],'image');
-  document.getElementById('anyFile').onchange=e=>uploadFile(e.target.files[0],'file');
-  document.getElementById('voiceBtn').onmousedown=startVoice; document.getElementById('voiceBtn').onmouseup=stopVoice; document.getElementById('voiceBtn').ontouchstart=startVoice; document.getElementById('voiceBtn').ontouchend=stopVoice;
-
+  document.getElementById('backBtn').onclick=()=>{ document.getElementById('chatArea').classList.add('hidden'); document.getElementById('chatArea').classList.remove('flex'); document.getElementById('emptyMobile').classList.remove('hidden'); document.getElementById('emptyMobile').classList.add('flex'); };
+  const msgInput=document.getElementById('msgInput');
+  msgInput.oninput=()=>{ msgInput.style.height='auto'; msgInput.style.height=Math.min(msgInput.scrollHeight,112)+'px'; };
+  msgInput.onkeydown=e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMessage(); } };
+  document.getElementById('imgFile').onchange=e=>uploadImage(e.target.files[0]);
   loadChats();
 }
 
 async function createNewChat(){
   const email=document.getElementById('friendEmail').value.trim().toLowerCase();
-  if(!email) return;
+  const errEl=document.getElementById('friendErr');
+  if(!email){ errEl.innerText='أدخل الإيميل'; return; }
   try{
-    const q=query(collection(db,'users'), where('email','==',email)); const snap=await getDocs(q);
-    if(snap.empty){ document.getElementById('friendErr').innerText='المستخدم غير موجود - يجب أن يسجل أولاً'; return; }
+    const q=query(collection(db,'users'), where('email','==',email));
+    const snap=await getDocs(q);
+    if(snap.empty){ errEl.innerText='المستخدم غير موجود - يجب أن يسجل أولاً في الموقع'; return; }
     const friend=snap.docs[0].data();
-    if(friend.uid===curUser.uid){ document.getElementById('friendErr').innerText='لا يمكنك محادثة نفسك'; return; }
+    if(friend.uid===curUser.uid){ errEl.innerText='لا يمكنك محادثة نفسك'; return; }
     const chatId=[curUser.uid, friend.uid].sort().join('_');
-    const refDoc=doc(db,'chats',chatId); const ex=await getDoc(refDoc);
-    if(!ex.exists()){ await setDoc(refDoc,{participants:[curUser.uid,friend.uid], createdAt:serverTimestamp(), lastMsg:''}); }
-    document.getElementById('newChatModal').classList.add('hidden'); openChat(chatId,friend.displayName);
-  }catch(e){ document.getElementById('friendErr').innerText=e.message; }
+    const refDoc=doc(db,'chats',chatId);
+    const ex=await getDoc(refDoc);
+    if(!ex.exists()){
+      await setDoc(refDoc,{participants:[curUser.uid,friend.uid], participantEmails:[curUser.email, friend.email], participantNames:[curUser.email.split('@')[0], friend.displayName||friend.email.split('@')[0]], createdAt:serverTimestamp(), lastMsg:'', lastMsgTime:serverTimestamp()});
+    }
+    document.getElementById('newChatModal').classList.add('hidden');
+    document.getElementById('friendEmail').value='';
+    errEl.innerText='';
+    openChat(chatId, friend);
+  }catch(e){ errEl.innerText=e.message; }
 }
 
 function loadChats(){
   if(unsubChats) unsubChats();
   const q=query(collection(db,'chats'), where('participants','array-contains',curUser.uid));
-  unsubChats=onSnapshot(q, snap=>{
-    const list=document.getElementById('chatList'); list.innerHTML='';
-    if(snap.empty){ list.innerHTML='<div class="text-center text-white/30 text-xs mt-10">لا يوجد محادثات بعد<br>اضغط + جديد</div>'; return; }
-    snap.forEach(d=>{
-      const data=d.data(); const otherId=data.participants.find(id=>id!==curUser.uid);
-      const div=document.createElement('div'); div.className='p-3 rounded-xl hover:bg-white/5 cursor-pointer flex justify-between items-center';
-      div.innerHTML=`<div><div class="text-sm font-bold">${otherId.slice(0,6)}...</div><div class="text-[11px] text-white/40 truncate w-[180px]">${data.lastMsg||''}</div></div><div class="text-[10px] text-white/20">الآن</div>`;
-      div.onclick=()=>openChat(d.id, otherId);
+  unsubChats=onSnapshot(q, async snap=>{
+    const list=document.getElementById('chatList');
+    list.innerHTML='';
+    if(snap.empty){ list.innerHTML='<div class="text-center text-white/30 text-xs mt-12 leading-6">لا يوجد محادثات بعد<br><span class="text-white/20">اضغط + جديد واكتب إيميل صديقك</span></div>'; return; }
+    // جلب بيانات المستخدمين الآخرين
+    for(const d of snap.docs){
+      const data=d.data();
+      const otherId=data.participants.find(id=>id!==curUser.uid);
+      let otherName=data.participantNames?.[data.participants.indexOf(otherId)]||otherId.slice(0,8);
+      try{ const uDoc=await getDoc(doc(db,'users',otherId)); if(uDoc.exists()) otherName=uDoc.data().displayName||uDoc.data().email||otherName; }catch(e){}
+      const div=document.createElement('div');
+      div.className='p-3 rounded-xl hover:bg-white/5 cursor-pointer flex justify-between items-center border border-transparent hover:border-white/5';
+      div.innerHTML=`<div class="flex items-center gap-3"><div class="w-10 h-10 bg-gradient-to-br from-zinc-700 to-zinc-900 rounded-full flex items-center justify-center font-bold text-sm">${otherName[0].toUpperCase()}</div><div><div class="text-[13px] font-bold">${otherName}</div><div class="text-[11px] text-white/40 truncate max-w-[160px]">${data.lastMsg||'ابدأ المحادثة...'}</div></div></div><div class="text-[10px] text-white/20">${data.lastMsgTime?'الآن':''}</div>`;
+      div.onclick=()=>openChat(d.id,{uid:otherId,displayName:otherName});
       list.appendChild(div);
-    });
+    }
   });
 }
 
-async function openChat(chatId, otherName){
-  curChat=chatId;
-  document.getElementById('chatHeader').innerHTML=`<div><div class="font-bold">${otherName}</div><div class="text-[11px] text-green-400">متصل</div></div><div class="flex gap-2"><button id="audioCall" class="bg-white/10 w-9 h-9 rounded-full">📞</button><button id="videoCall" class="bg-white/10 w-9 h-9 rounded-full">📹</button></div>`;
+async function openChat(chatId, other){
+  curChat=chatId; curChatOther=other;
+  // للموبايل: إخفاء القائمة وإظهار المحادثة
+  if(window.innerWidth<768){
+    document.getElementById('sidebar').classList.add('hidden');
+    document.getElementById('emptyMobile').classList.add('hidden');
+    document.getElementById('chatArea').classList.remove('hidden');
+    document.getElementById('chatArea').classList.add('flex');
+  } else {
+    document.getElementById('chatArea').classList.remove('hidden');
+    document.getElementById('chatArea').classList.add('flex');
+  }
+  document.getElementById('chatName').innerText=other.displayName||other;
+  document.getElementById('chatStatus').innerText='متصل - اضغط 📞 للاتصال';
   document.getElementById('composer').classList.remove('hidden');
-  document.getElementById('audioCall').onclick=()=>startCall(false); document.getElementById('videoCall').onclick=()=>startCall(true);
+  document.getElementById('audioCall').classList.remove('hidden');
+  document.getElementById('videoCall').classList.remove('hidden');
+  document.getElementById('audioCall').onclick=()=>startCall(false, other);
+  document.getElementById('videoCall').onclick=()=>startCall(true, other);
+  document.getElementById('msgs').innerHTML='<div class="text-center text-white/20 text-xs mt-10">جاري تحميل الرسائل...</div>';
+
   if(unsubMsgs) unsubMsgs();
+  // نستخدم نفس استعلام الرسائل القديم الذي يعمل
   const q=query(collection(db,'messages'), where('chatId','==',chatId), orderBy('createdAt'));
   unsubMsgs=onSnapshot(q, snap=>{
-    const box=document.getElementById('msgs'); box.innerHTML='';
+    const box=document.getElementById('msgs');
+    box.innerHTML='';
+    if(snap.empty){ box.innerHTML='<div class="text-center text-white/20 text-xs mt-20">لا يوجد رسائل بعد<br>اكتب أول رسالة! 💬</div>'; return; }
     snap.forEach(m=>{
-      const d=m.data(); const isMe=d.sender===curUser.uid;
-      const el=document.createElement('div'); el.className=`flex ${isMe?'justify-end':'justify-start'}`;
+      const d=m.data();
+      const isMe=d.sender===curUser.uid;
+      const el=document.createElement('div');
+      el.className=`flex ${isMe?'justify-end':'justify-start'} px-1`;
       let content='';
-      if(d.type==='image') content=`<img src="${d.fileUrl}" class="max-w-[220px] rounded-xl cursor-pointer" onclick="window.open('${d.fileUrl}')">`;
-      else if(d.type==='voice') content=`<audio controls src="${d.fileUrl}" class="w-[200px]"></audio>`;
-      else if(d.type==='file') content=`<a href="${d.fileUrl}" target="_blank" class="underline">📁 ${d.fileName} - تحميل</a>`;
-      else content=`<span class="text-sm">${d.text}</span>`;
-      el.innerHTML=`<div class="${isMe?'bg-white text-black':'bg-[#1e242a]'} rounded-[18px] px-4 py-2 max-w-[75%]">${content}<div class="text-[10px] opacity-50 mt-1">${d.createdAt?.toDate?new Date(d.createdAt.toDate()).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}):''}</div></div>`;
+      if(d.type==='image'&&d.fileUrl) content=`<img src="${d.fileUrl}" class="max-w-[220px] md:max-w-[280px] rounded-2xl cursor-pointer" onclick="window.open('${d.fileUrl}')">`;
+      else content=`<span class="text-[14px] leading-5 msg-bubble">${escapeHtml(d.text||'')}</span>`;
+      const time=d.createdAt?.toDate?new Date(d.createdAt.toDate()).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}):'';
+      el.innerHTML=`<div class="${isMe?'bg-white text-black rounded-[18px] rounded-br-[4px]':'bg-[#1e242a] rounded-[18px] rounded-bl-[4px]'} px-3.5 py-2.5 max-w-[78%] md:max-w-[68%] shadow"><div>${content}</div><div class="text-[10px] ${isMe?'text-black/50':'text-white/30'} mt-1 text-left">${time}</div></div>`;
       box.appendChild(el);
     });
-    box.scrollTop=box.scrollHeight;
+    // اجعل الشاشة تنزل لآخر رسالة تلقائياً
+    setTimeout(()=>{ box.scrollTop=box.scrollHeight; },100);
+  }, err=>{
+    document.getElementById('msgs').innerHTML=`<div class="text-red-400 text-xs text-center mt-10">خطأ: ${err.message}<br>تأكد من Rules</div>`;
   });
 }
 
+function escapeHtml(t){ return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 async function sendMessage(){
-  const txt=document.getElementById('msgInput').value.trim(); if(!txt||!curChat) return;
-  document.getElementById('msgInput').value='';
-  await addDoc(collection(db,'messages'),{chatId:curChat, sender:curUser.uid, text:txt, type:'text', createdAt:serverTimestamp()});
-  await updateDoc(doc(db,'chats',curChat),{lastMsg:txt});
+  const input=document.getElementById('msgInput');
+  const txt=input.value.trim();
+  if(!txt||!curChat) return;
+  input.value=''; input.style.height='auto';
+  try{
+    await addDoc(collection(db,'messages'),{chatId:curChat, sender:curUser.uid, text:txt, type:'text', createdAt:serverTimestamp()});
+    await updateDoc(doc(db,'chats',curChat),{lastMsg:txt, lastMsgTime:serverTimestamp()});
+  }catch(e){ alert('فشل الإرسال: '+e.message); }
 }
 
-async function uploadFile(file,type){
-  if(!file||!curChat) return; 
-  const path=`chats/${curChat}/${Date.now()}_${file.name}`;
-  const r=ref(storage,path); await uploadBytes(r,file); const url=await getDownloadURL(r);
-  await addDoc(collection(db,'messages'),{chatId:curChat, sender:curUser.uid, type:type, fileUrl:url, fileName:file.name, text:type==='image'?'📷 صورة':`📁 ${file.name}`, createdAt:serverTimestamp()});
-  await updateDoc(doc(db,'chats',curChat),{lastMsg:type==='image'?'📷 صورة':'📁 ملف'});
+async function uploadImage(file){
+  if(!file||!curChat) return;
+  try{
+    const path=`chats/${curChat}/${Date.now()}_${file.name}`;
+    const r=ref(storage,path);
+    await uploadBytes(r,file);
+    const url=await getDownloadURL(r);
+    await addDoc(collection(db,'messages'),{chatId:curChat, sender:curUser.uid, type:'image', fileUrl:url, text:'📷 صورة', createdAt:serverTimestamp()});
+    await updateDoc(doc(db,'chats',curChat),{lastMsg:'📷 صورة', lastMsgTime:serverTimestamp()});
+  }catch(e){ alert('فشل رفع الصورة: '+e.message+'\nتأكد من تفعيل Storage Rules'); }
 }
 
-async function startVoice(e){ e?.preventDefault(); try{ const s=await navigator.mediaDevices.getUserMedia({audio:true}); mediaRecorder=new MediaRecorder(s); audioChunks=[]; mediaRecorder.ondataavailable=ev=>audioChunks.push(ev.data); mediaRecorder.onstop=async()=>{ const blob=new Blob(audioChunks,{type:'audio/webm'}); const file=new File([blob],`voice_${Date.now()}.webm`); await uploadFile(file,'voice'); }; mediaRecorder.start(); document.getElementById('voiceBtn').classList.add('bg-red-600'); }catch(err){ alert('لا يمكن الوصول للمايك'); } }
-async function stopVoice(e){ e?.preventDefault(); if(mediaRecorder&&mediaRecorder.state==='recording'){ mediaRecorder.stop(); document.getElementById('voiceBtn').classList.remove('bg-red-600'); } }
-
-// --- مكالمات WebRTC بسيطة عبر Firestore ---
-let pc, localStream;
-async function startCall(isVideo){
-  document.getElementById('callOverlay').classList.remove('hidden'); document.getElementById('callOverlay').classList.add('flex');
-  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-  localStream=await navigator.mediaDevices.getUserMedia({video:isVideo,audio:true});
-  document.getElementById('localVideo').srcObject=localStream;
-  localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
-  pc.ontrack=e=>{ document.getElementById('remoteVideo').srcObject=e.streams[0]; };
-  const callDoc=doc(collection(db,'calls')); const offerCandidates=collection(callDoc,'offerCandidates'); const answerCandidates=collection(callDoc,'answerCandidates');
-  pc.onicecandidate=e=>{ if(e.candidate) addDoc(offerCandidates,e.candidate.toJSON()); };
-  const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
-  await setDoc(callDoc,{offer:{type:offer.type,sdp:offer.sdp}, chatId:curChat, createdAt:serverTimestamp()});
-  onSnapshot(callDoc, async snap=>{ const data=snap.data(); if(!pc.currentRemoteDescription && data?.answer){ const ans=new RTCSessionDescription(data.answer); await pc.setRemoteDescription(ans); } });
-  onSnapshot(answerCandidates, snap=>{ snap.docChanges().forEach(async ch=>{ if(ch.type==='added'){ const cand=new RTCIceCandidate(ch.doc.data()); await pc.addIceCandidate(cand); } }); });
+// ========== نظام المكالمات ==========
+let currentCallDoc=null;
+function listenForIncomingCalls(){
+  if(unsubCalls) unsubCalls();
+  const q=query(collection(db,'calls'), where('to','==',curUser.uid), where('status','==','ringing'));
+  unsubCalls=onSnapshot(q, snap=>{
+    snap.docChanges().forEach(ch=>{
+      if(ch.type==='added'){
+        const data=ch.doc.data();
+        currentCallDoc=ch.doc;
+        showIncomingCall(data);
+      }
+    });
+  });
 }
-document.getElementById('endCall')?.addEventListener('click', async()=>{ if(pc) pc.close(); if(localStream) localStream.getTracks().forEach(t=>t.stop()); document.getElementById('callOverlay').classList.add('hidden'); });
+
+function showIncomingCall(data){
+  document.getElementById('incomingCall').classList.remove('hidden');
+  document.getElementById('incomingCall').classList.add('flex');
+  document.getElementById('callerName').innerText=data.fromName||'مكالمة';
+  document.getElementById('callerType').innerText=data.isVideo?'مكالمة فيديو واردة 📹':'مكالمة صوتية واردة 📞';
+  // صوت رنين
+  const audio=new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+  audio.loop=true; audio.play().catch(()=>{});
+  document.getElementById('rejectCall').onclick=async()=>{ audio.pause(); document.getElementById('incomingCall').classList.add('hidden'); await updateDoc(currentCallDoc.ref,{status:'rejected'}); };
+  document.getElementById('acceptCall').onclick=async()=>{ audio.pause(); document.getElementById('incomingCall').classList.add('hidden'); await acceptCall(currentCallDoc, data); };
+}
+
+async function startCall(isVideo, other){
+  try{
+    localStream=await navigator.mediaDevices.getUserMedia({video:isVideo, audio:true});
+    document.getElementById('callOverlay').classList.remove('hidden'); document.getElementById('callOverlay').classList.add('flex');
+    document.getElementById('localVideo').srcObject=localStream;
+    document.getElementById('callStatus').innerText=isVideo?'جاري الاتصال فيديو...':'جاري الاتصال صوتي...';
+
+    pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+    pc.ontrack=e=>{ if(!remoteStream){ remoteStream=e.streams[0]; document.getElementById('remoteVideo').srcObject=remoteStream; document.getElementById('callStatus').innerText='متصل الآن ✅'; } };
+
+    const callRef=doc(collection(db,'calls'));
+    currentCallDoc=callRef;
+    const offerCandidates=collection(callRef,'offerCandidates');
+    const answerCandidates=collection(callRef,'answerCandidates');
+
+    pc.onicecandidate=e=>{ if(e.candidate) addDoc(offerCandidates,e.candidate.toJSON()); };
+
+    const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+
+    await setDoc(callRef,{from:curUser.uid, fromName:curUser.email.split('@')[0], to:other.uid, isVideo, status:'ringing', offer:{type:offer.type, sdp:offer.sdp}, createdAt:serverTimestamp()});
+
+    onSnapshot(callRef, async snap=>{
+      const data=snap.data();
+      if(data?.status==='rejected'){ endCall(); alert('تم رفض المكالمة'); }
+      if(!pc.currentRemoteDescription && data?.answer){ const ans=new RTCSessionDescription(data.answer); await pc.setRemoteDescription(ans); }
+    });
+
+    onSnapshot(answerCandidates, snap=>{
+      snap.docChanges().forEach(async ch=>{ if(ch.type==='added'){ const cand=new RTCIceCandidate(ch.doc.data()); await pc.addIceCandidate(cand); } });
+    });
+
+  }catch(e){ alert('لا يمكن بدء المكالمة: '+e.message+'\nتأكد من السماح للكاميرا والمايك'); endCall(); }
+}
+
+async function acceptCall(callDocRef, data){
+  try{
+    localStream=await navigator.mediaDevices.getUserMedia({video:data.isVideo, audio:true});
+    document.getElementById('callOverlay').classList.remove('hidden'); document.getElementById('callOverlay').classList.add('flex');
+    document.getElementById('localVideo').srcObject=localStream;
+    document.getElementById('callStatus').innerText='تم الرد - جاري الاتصال...';
+
+    pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+    pc.ontrack=e=>{ remoteStream=e.streams[0]; document.getElementById('remoteVideo').srcObject=remoteStream; document.getElementById('callStatus').innerText='متصل الآن ✅'; };
+
+    const offerCandidates=collection(callDocRef.ref,'offerCandidates');
+    const answerCandidates=collection(callDocRef.ref,'answerCandidates');
+
+    pc.onicecandidate=e=>{ if(e.candidate) addDoc(answerCandidates,e.candidate.toJSON()); };
+
+    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+    const answer=await pc.createAnswer(); await pc.setLocalDescription(answer);
+
+    await updateDoc(callDocRef.ref,{answer:{type:answer.type, sdp:answer.sdp}, status:'answered'});
+
+    onSnapshot(offerCandidates, snap=>{
+      snap.docChanges().forEach(async ch=>{ if(ch.type==='added'){ const cand=new RTCIceCandidate(ch.doc.data()); await pc.addIceCandidate(cand); } });
+    });
+
+  }catch(e){ alert('فشل الرد: '+e.message); endCall(); }
+}
+
+function endCall(){
+  if(pc) pc.close(); pc=null;
+  if(localStream) localStream.getTracks().forEach(t=>t.stop()); localStream=null; remoteStream=null;
+  document.getElementById('callOverlay').classList.add('hidden'); document.getElementById('callOverlay').classList.remove('flex');
+  document.getElementById('incomingCall').classList.add('hidden');
+  document.getElementById('callStatus').innerText='جاري الاتصال...';
+  if(currentCallDoc){ updateDoc(currentCallDoc.ref||currentCallDoc,{status:'ended'}).catch(()=>{}); currentCallDoc=null; }
+}
+document.getElementById('endCall').onclick=endCall;
 </script>
 </body>
 </html>
